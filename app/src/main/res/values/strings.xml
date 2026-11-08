@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Lab7_BackgroundMedia</string>
+    <string name="title_screen">Фоновое воспроизведение (MediaSession)</string>
+    <string name="subtitle">Плейлист, Foreground Service и уведомления</string>
+    <string name="label_now_playing">Сейчас играет:</string>
+    <string name="btn_prev">⏮ Назад</string>
+    <string name="btn_play">▶ Play</string>
+    <string name="btn_pause">⏸ Pause</string>
+    <string name="btn_next">⏭ Вперед</string>
+    <string name="btn_stop">⏹ Стоп</string>
+</resources>
