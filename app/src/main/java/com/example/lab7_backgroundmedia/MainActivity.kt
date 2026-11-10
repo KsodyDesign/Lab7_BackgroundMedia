@@ -11,12 +11,11 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseActivity() {
 
     private lateinit var tvTrackTitle: TextView
     private lateinit var tvTrackNumber: TextView
@@ -122,6 +121,8 @@ class MainActivity : AppCompatActivity() {
             stateReceiver,
             IntentFilter(MediaService.BROADCAST_STATE_CHANGED)
         )
+        // A normal start from the visible Activity asks for state without starting playback.
+        startService(Intent(this, MediaService::class.java).setAction(MediaService.ACTION_QUERY))
     }
 
     override fun onStop() {

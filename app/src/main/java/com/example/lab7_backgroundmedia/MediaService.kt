@@ -10,6 +10,7 @@ import android.content.Intent
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.IBinder
+import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
@@ -21,6 +22,7 @@ class MediaService : Service() {
         const val CHANNEL_ID = "media_playback_channel"
         const val NOTIFICATION_ID = 1001
 
+        const val ACTION_QUERY = "action_query"
         const val ACTION_PLAY = "action_play"
         const val ACTION_PAUSE = "action_pause"
         const val ACTION_STOP = "action_stop"
@@ -35,15 +37,17 @@ class MediaService : Service() {
     }
 
     private val playlist = listOf(
-        TrackInfo(R.raw.sample_audio_1, "Track 1 - Chill Beats", "SoundHelix"),
-        TrackInfo(R.raw.sample_audio_2, "Track 2 - Ambient Waves", "SoundHelix"),
-        TrackInfo(R.raw.sample_audio_3, "Track 3 - Energy Flow", "SoundHelix")
+        TrackInfo(R.raw.sample_audio_1, "Track 1 - Demo melody 1", "Локальный учебный пример"),
+        TrackInfo(R.raw.sample_audio_2, "Track 2 - Demo melody 2", "Локальный учебный пример"),
+        TrackInfo(R.raw.sample_audio_3, "Track 3 - Demo melody 3", "Локальный учебный пример")
     )
 
     private var currentIndex = 0
     private val currentTrack: TrackInfo
         get() = playlist[currentIndex]
 
+    private var currentState = "stopped"
+    private var foreground = false
     private var mediaPlayer: MediaPlayer? = null
     private lateinit var mediaSession: MediaSessionCompat
 
@@ -53,54 +57,71 @@ class MediaService : Service() {
 
         mediaSession = MediaSessionCompat(this, "MediaServiceSession").apply {
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() { play() }
-                override fun onPause() { pause() }
-                override fun onStop() { stopAndDestroy() }
-                override fun onSkipToNext() { next() }
-                override fun onSkipToPrevious() { previous() }
+                override fun onPlay() { safely { play() } }
+                override fun onPause() { safely { pause() } }
+                override fun onStop() { safely { stopAndDestroy() } }
+                override fun onSkipToNext() { safely { next() } }
+                override fun onSkipToPrevious() { safely { previous() } }
             })
+            setPlaybackState(PlaybackStateCompat.Builder()
+                .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PLAY_PAUSE)
+                .setState(PlaybackStateCompat.STATE_STOPPED, 0, 0f).build())
             isActive = true
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_PLAY -> play()
-            ACTION_PAUSE -> pause()
-            ACTION_STOP -> stopAndDestroy()
-            ACTION_NEXT -> next()
-            ACTION_PREVIOUS -> previous()
-            else -> {
-                // Если запуск без конкретного действия — начать или продолжить воспроизведение
-                if (mediaPlayer == null) {
-                    loadCurrentTrack()
-                    play()
-                } else if (!mediaPlayer!!.isPlaying) {
-                    play()
-                }
+        if (intent?.action == ACTION_QUERY) {
+            sendState(currentState, currentTrack.title)
+            if (!foreground) stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        // Every foreground-service launch must promote promptly, even Pause/Stop
+        // pressed before the first Play. Loading resources happens afterwards.
+        if (!foreground) {
+            startForeground(NOTIFICATION_ID, buildNotification(currentTrack.title, "Готов к воспроизведению", false))
+            foreground = true
+        }
+        try {
+            when (intent?.action) {
+                ACTION_PLAY -> play()
+                ACTION_PAUSE -> pause()
+                ACTION_STOP -> stopAndDestroy()
+                ACTION_NEXT -> next()
+                ACTION_PREVIOUS -> previous()
+                else -> play()
             }
+        } catch (error: Exception) {
+            handlePlaybackError()
         }
         return START_NOT_STICKY
+    }
+
+    private fun safely(action: () -> Unit) {
+        try { action() } catch (error: Exception) { handlePlaybackError() }
     }
 
     private fun loadCurrentTrack() {
         mediaPlayer?.release()
         mediaPlayer = null
         mediaPlayer = MediaPlayer.create(this, currentTrack.resId)
+            ?: throw IllegalStateException("Не удалось открыть трек")
 
         mediaPlayer?.setOnCompletionListener {
             // Автопереход к следующему треку (Критерий задания)
-            if (currentIndex < playlist.lastIndex) {
-                currentIndex++
-                loadCurrentTrack()
-                play()
-            } else {
-                stopAndDestroy()
+            safely {
+                if (currentIndex < playlist.lastIndex) {
+                    currentIndex++
+                    loadCurrentTrack()
+                    play()
+                } else {
+                    stopAndDestroy()
+                }
             }
         }
 
         mediaPlayer?.setOnErrorListener { _, _, _ ->
-            sendState("error", currentTrack.title)
+            handlePlaybackError()
             true
         }
     }
@@ -112,10 +133,15 @@ class MediaService : Service() {
 
         mediaPlayer?.start()
         startForeground(NOTIFICATION_ID, buildNotification(currentTrack.title, "Воспроизводится", true))
+        foreground = true
         sendState("playing", currentTrack.title)
     }
 
     private fun pause() {
+        if (mediaPlayer == null) {
+            stopAndDestroy()
+            return
+        }
         if (mediaPlayer?.isPlaying == true) {
             mediaPlayer?.pause()
         }
@@ -150,15 +176,43 @@ class MediaService : Service() {
     }
 
     private fun stopAndDestroy() {
-        mediaPlayer?.stop()
         mediaPlayer?.release()
         mediaPlayer = null
         sendState("stopped", currentTrack.title)
         stopForeground(STOP_FOREGROUND_REMOVE)
+        foreground = false
+        stopSelf()
+    }
+
+    private fun handlePlaybackError() {
+        mediaPlayer?.release()
+        mediaPlayer = null
+        sendState("error", currentTrack.title)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        foreground = false
         stopSelf()
     }
 
     private fun sendState(state: String, title: String) {
+        currentState = state
+        val playing = state == "playing"
+        val sessionState = when (state) {
+            "playing" -> PlaybackStateCompat.STATE_PLAYING
+            "paused" -> PlaybackStateCompat.STATE_PAUSED
+            "error" -> PlaybackStateCompat.STATE_ERROR
+            else -> PlaybackStateCompat.STATE_STOPPED
+        }
+        mediaSession.setMetadata(MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentTrack.artist)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, mediaPlayer?.duration?.toLong() ?: 0L)
+            .build())
+        mediaSession.setPlaybackState(PlaybackStateCompat.Builder()
+            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE
+                or PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP
+                or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+            .setState(sessionState, mediaPlayer?.currentPosition?.toLong() ?: 0L, if (playing) 1f else 0f)
+            .build())
         val intent = Intent(BROADCAST_STATE_CHANGED).apply {
             putExtra(EXTRA_STATE, state)
             putExtra(EXTRA_TITLE, title)
@@ -199,7 +253,9 @@ class MediaService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
-            .setContentText(text)
+            .setContentText("${currentTrack.artist} — $text")
+            .setOngoing(isPlaying)
+            .setOnlyAlertOnce(true)
             .setSubText("${currentIndex + 1} из ${playlist.size}")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(openAppIntent)

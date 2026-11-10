@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:fillViewport="true">
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="20dp"
     android:gravity="center_horizontal">
@@ -48,7 +51,7 @@
             android:id="@+id/tvTrackTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Track 1 - Chill Beats"
+            android:text="Track 1 - Demo melody 1"
             android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="#212121"
@@ -136,3 +139,5 @@
         android:background="#F5F5F5" />
 
 </LinearLayout>
+
+</ScrollView>
